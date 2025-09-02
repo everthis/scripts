@@ -127,10 +127,12 @@ async function retry(fn, retries = 3, delayMs = 0, ...args) {
       {
         kind: r1[0]["format"],
         url: r1[0]["play_addr"]["url_list"][2],
+        bitRate: r1[0],
       },
       {
         kind: r2[0]["format"],
         url: r2[0]["play_addr"]["url_list"][2],
+        bitRate: r2[0],
       },
     ];
     res.forEach((x) => {
@@ -153,7 +155,8 @@ async function retry(fn, retries = 3, delayMs = 0, ...args) {
         parsePath(target) +
           `__${urlObj.uid}` +
           `__${urlObj.sec_uid}` +
-          `__${new Date().getTime()}` +
+          `__${urlObj.bitRate['play_addr'].width}x${urlObj.bitRate['play_addr'].height}` +
+          `__${urlObj.bitRate['bit_rate']}bps` +
           "." +
           urlObj.kind
       );
