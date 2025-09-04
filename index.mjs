@@ -76,28 +76,28 @@ async function retry(fn, retries = 3, delayMs = 0, ...args) {
     } catch (error) {
       lastError = error;
       if (i < retries - 1 && delayMs > 0) {
-        await new Promise(resolve => setTimeout(resolve, delayMs));
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
       }
     }
   }
-  throw lastError
+  throw lastError;
 }
 
 function imgPath(obj) {
   return path.join(
-        process.cwd(),
-        "downloads",
-        obj.awemeId +
-          `__${obj.uid}` +
-          `__${obj.sec_uid}` +
-          `__${encodeURIComponent(obj.uri)}` +
-          `__${obj.width}x${obj.height}` +
-          "." +
-          obj.type
-      );
+    process.cwd(),
+    "downloads",
+    obj.awemeId +
+      `__${obj.uid}` +
+      `__${obj.sec_uid}` +
+      `__${encodeURIComponent(obj.uri)}` +
+      `__${obj.width}:${obj.height}` +
+      "." +
+      obj.type
+  );
 }
 
-;(async () => {
+(async () => {
   const browser = await puppeteer.launch({ headless: true });
   let page = await browser.newPage();
   if (!targets) {
@@ -116,6 +116,7 @@ function imgPath(obj) {
   }
 
   async function single(str) {
+    let errNum = 0;
     if (page) {
       try {
         await page.close();
@@ -128,119 +129,180 @@ function imgPath(obj) {
     await page.goto(target);
     console.log("Page loaded");
     // video
-    const videoPromise = page.waitForResponse(
-      (response) =>
-        response
-          .url()
-          .startsWith("https://www.douyin.com/aweme/v1/web/aweme/detail/") &&
-        response.status() === 200,
-      { timeout: 5000 }
-    );
-    // images
-    // https://www.douyin.com/aweme/v1/web/aweme/post/
-    // aweme_list[0].images[i].url_list[1]
-    const imgPromise = page.waitForResponse(
-      (response) =>
-        response
-          .url()
-          .startsWith("https://www.douyin.com/aweme/v1/web/aweme/post/") &&
-        response.status() === 200,
-      { timeout: 5000 }
-    );
+    const videoPromise = page
+      .waitForResponse(
+        (response) =>
+          response
+            .url()
+            .startsWith("https://www.douyin.com/aweme/v1/web/aweme/detail/") &&
+          response.status() === 200,
+        { timeout: 5000 }
+      )
+      .then((r) => r.json())
+      .then(videoFn)
+      .catch(errNumFn);
 
-    const resp = await Promise.race([videoPromise, imgPromise]).then(r => r.json());
+    const notePromise = page.waitForSelector(
+      ".note-detail-container button + div > img",
+      { timeout: 5000 }
+    ).then(r => r == null ? null : noteEval()).then(noteFn)
+    .catch(errNumFn);
 
-    console.log("Final request captured");
-    if(resp.aweme_list && resp.aweme_list.length > 0){
-      const curUrl = await page.url();
-      const awemeId = parsePath(curUrl);
-      const item = resp.aweme_list.find(x => x.aweme_id === awemeId);
-      if(item && item.images && item.images.length > 0){
-        console.log('images found, downloading images');
-        for(let i = 0; i < item.images.length; i++){
+    return Promise.race([videoPromise, notePromise]).then(() => {
+      console.log("Processing completed for", target);
+    }).catch(err => {
+      console.error("Error processing", target, err);
+    });
+
+    function errNumFn() {
+      errNum++;
+      if (errNum >= 2) {
+        throw new Error("Both video and note processing failed");
+      }
+    }
+    function noteEval() {
+      return page.evaluate(
+        () => {
+          const els = document.querySelectorAll(
+            ".note-detail-container button + div > img"
+          );
+          const res = [];
+          for (const e of els) {
+            if (e.src) {
+              res.push(e.src);
+            }
+          }
+          if (res.length === 0) return res;
+          let t;
+          let src = res[0];
+          let { pathname } = new URL(src);
+          if (res.length) {
+            let arr = document.querySelectorAll("script:not([src])");
+
+            for (const e of arr) {
+              if (e.innerHTML.indexOf(pathname) !== -1) {
+                t = e;
+                break;
+              }
+            }
+          }
+          const str = t.innerHTML;
+          const tmpArr = str.split(".");
+          const paceF = self[tmpArr[1]];
+          let ans;
+
+          for (let i = 0; i < paceF.length; i++) {
+            const x = paceF[i];
+
+            if (x[1] && typeof x[1] === "string" && x[1].includes(pathname)) {
+              ans = x[1];
+              break;
+            }
+          }
+          if (ans) {
+            const index = ans.indexOf(":");
+            ans = ans.slice(index + 1);
+            if (ans) {
+              ans = JSON.parse(ans);
+              ans = ans.at(-1);
+            }
+          }
+
+          return ans;
+        },
+        { timeout: 5000 }
+      );
+    }
+
+    async function noteFn(resp) {
+      const { aweme, awemeId } = resp;
+      const { detail: item } = aweme;
+
+      if (item && item.images && item.images.length > 0) {
+        console.log("images found, downloading images");
+        for (let i = 0; i < item.images.length; i++) {
           const img = item.images[i];
-          const imgUrl = img.url_list[1];
+          const imgUrl = img.urlList[1];
           const urlIns = new URL(imgUrl);
           const { pathname } = urlIns;
-          const tmp = pathname.split('.')
+          const tmp = pathname.split(".");
           const ext = tmp[tmp.length - 1];
           const obj = {
             awemeId,
-            uid: item.author.uid,
-            sec_uid: item.author.sec_uid,
+            uid: item.authorInfo.uid,
+            sec_uid: item.authorInfo.secUid,
             uri: img.uri,
             width: img.width,
             height: img.height,
-            type: ext
-          }
+            type: ext,
+          };
           const filePath = imgPath(obj);
-          if(fs.existsSync(filePath)){
-            console.log('File exists, skipping', filePath);
+          if (fs.existsSync(filePath)) {
+            console.log("File exists, skipping", filePath);
           } else {
-            console.log('Downloading image to', filePath);
             await download(imgUrl, filePath);
-            console.log('Download completed:', filePath);
+            console.log("Download completed:", filePath);
           }
         }
       }
-      return;
     }
 
-    let r0 = resp["aweme_detail"]["video"]["bit_rate"],
-      r1 = r0
-        .slice(0)
-        .sort((a, b) => b["play_addr"]["width"] - a["play_addr"]["width"]),
-      r2 = r0.slice(0).sort((a, b) => b["bit_rate"] - a["bit_rate"]);
+    async function videoFn(resp) {
+      let r0 = resp["aweme_detail"]["video"]["bit_rate"],
+        r1 = r0
+          .slice(0)
+          .sort((a, b) => b["play_addr"]["width"] - a["play_addr"]["width"]),
+        r2 = r0.slice(0).sort((a, b) => b["bit_rate"] - a["bit_rate"]);
 
-    const res = [
-      {
-        kind: r1[0]["format"],
-        url: r1[0]["play_addr"]["url_list"][2],
-        bitRate: r1[0],
-      },
-      {
-        kind: r2[0]["format"],
-        url: r2[0]["play_addr"]["url_list"][2],
-        bitRate: r2[0],
-      },
-    ];
-    res.forEach((x) => {
-      x.uid = resp["aweme_detail"]["author"]["uid"];
-      x.unique_id = resp["aweme_detail"]["author"]["unique_id"];
-      x.sec_uid = resp["aweme_detail"]["author"]["sec_uid"];
-    });
+      const res = [
+        {
+          kind: r1[0]["format"],
+          url: r1[0]["play_addr"]["url_list"][2],
+          bitRate: r1[0],
+        },
+        {
+          kind: r2[0]["format"],
+          url: r2[0]["play_addr"]["url_list"][2],
+          bitRate: r2[0],
+        },
+      ];
+      res.forEach((x) => {
+        x.uid = resp["aweme_detail"]["author"]["uid"];
+        x.unique_id = resp["aweme_detail"]["author"]["unique_id"];
+        x.sec_uid = resp["aweme_detail"]["author"]["sec_uid"];
+      });
 
-    console.log(res);
-    const isSame = res[0].url === res[1].url;
-    if (isSame) {
-      console.log("Best quality and highest bitrate are the same.");
-    } else {
-      console.log("Best quality and highest bitrate are different.");
-    }
-    const genPath = (urlObj) =>
-      path.join(
-        process.cwd(),
-        "downloads",
-        parsePath(target) +
-          `__${urlObj.uid}` +
-          `__${urlObj.sec_uid}` +
-          `__${urlObj.bitRate.FPS}FPS` +
-          `__${urlObj.bitRate['play_addr'].width}x${urlObj.bitRate['play_addr'].height}` +
-          `__${urlObj.bitRate['bit_rate']}bps` +
-          "." +
-          urlObj.kind
-      );
-    const doDownload = async (urlObj) => {
-      const filePath = genPath(urlObj);
-      console.log("Downloading to", filePath);
-      await download(urlObj.url, filePath);
-      console.log("Download completed:", filePath);
-    };
-    await doDownload(res[0]);
+      const isSame = res[0].url === res[1].url;
+      if (isSame) {
+        console.log("Best quality and highest bitrate are the same.");
+      } else {
+        console.log("Best quality and highest bitrate are different.");
+      }
+      const genPath = (urlObj) =>
+        path.join(
+          process.cwd(),
+          "downloads",
+          parsePath(target) +
+            `__${urlObj.uid}` +
+            `__${urlObj.sec_uid}` +
+            `__${urlObj.bitRate.FPS}FPS` +
+            `__${urlObj.bitRate["play_addr"].width}x${urlObj.bitRate["play_addr"].height}` +
+            `__${urlObj.bitRate["bit_rate"]}bps` +
+            "." +
+            urlObj.kind
+        );
+      const doDownload = async (urlObj) => {
+        const filePath = genPath(urlObj);
+        console.log("Downloading to", filePath);
+        await download(urlObj.url, filePath);
+        console.log("Download completed:", filePath);
+      };
+      await doDownload(res[0]);
 
-    if (!isSame) {
-      await sleep(1000);
-      await doDownload(res[1]);
+      if (!isSame) {
+        await sleep(1000);
+        await doDownload(res[1]);
+      }
     }
   }
 
