@@ -138,23 +138,28 @@ function imgPath(obj) {
           response.status() === 200,
         { timeout: 5000 }
       )
+      .then(resFn, errNumFn)
       .then((r) => r.json())
-      .then(videoFn)
-      .catch(errNumFn);
+      .then(videoFn);
 
-    const notePromise = page.waitForSelector(
-      ".note-detail-container button + div > img",
-      { timeout: 5000 }
-    ).then(r => r == null ? null : noteEval()).then(noteFn)
-    .catch(errNumFn);
+    const notePromise = page
+      .waitForSelector(".note-detail-container button + div > img", {
+        timeout: 5000,
+      })
+      .then(resFn, errNumFn)
+      .then((r) => (r == null ? null : noteEval()))
+      .then(noteFn);
 
-    return Promise.race([videoPromise, notePromise]).then(() => {
-      console.log("Processing completed for", target);
-    }).catch(err => {
-      console.error("Error processing", target, err);
-    });
-
-    function errNumFn() {
+    return Promise.race([videoPromise, notePromise])
+      .then(() => {
+        console.log("Processing completed for", target);
+      })
+      
+    function resFn(resp) {
+      return resp;
+    }
+    function errNumFn(err) {
+      // console.error("Error in processing:", err);
       errNum++;
       if (errNum >= 2) {
         throw new Error("Both video and note processing failed");
