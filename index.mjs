@@ -5,6 +5,8 @@ import { URL } from "node:url";
 import path from "node:path";
 import * as readline from "node:readline/promises";
 
+const { log } = console;
+
 let targets = process.argv[2];
 
 if (!fs.existsSync("downloads")) {
@@ -97,6 +99,30 @@ function imgPath(obj) {
   );
 }
 
+async function doDownload(assetUrl, filePath) {
+  console.log("Downloading to", filePath);
+  if (fs.existsSync(filePath)) {
+    console.log("File exists, skipping", filePath);
+    return;
+  }
+  await retry(download, 3, 0, assetUrl, filePath);
+  console.log("Download completed:", filePath);
+}
+function genVideoPath(urlObj) {
+  return path.join(
+    process.cwd(),
+    "downloads",
+    urlObj.targetPath +
+      `__${urlObj.uid}` +
+      `__${urlObj.sec_uid}` +
+      `__${urlObj.bitRate.FPS}FPS` +
+      `__${urlObj.bitRate["play_addr"].width}x${urlObj.bitRate["play_addr"].height}` +
+      `__${urlObj.bitRate["bit_rate"]}bps` +
+      "." +
+      urlObj.kind
+  );
+}
+
 (async () => {
   const browser = await puppeteer.launch({ headless: true });
   let page = await browser.newPage();
@@ -150,16 +176,15 @@ function imgPath(obj) {
       .then((r) => (r == null ? null : noteEval()))
       .then(noteFn);
 
-    return Promise.race([videoPromise, notePromise])
-      .then(() => {
-        console.log("Processing completed for", target);
-      })
-      
+    return Promise.race([videoPromise, notePromise]).then(() => {
+      log("Processing completed for", target);
+      log('\n')
+    });
+
     function resFn(resp) {
       return resp;
     }
     function errNumFn(err) {
-      // console.error("Error in processing:", err);
       errNum++;
       if (errNum >= 2) {
         throw new Error("Both video and note processing failed");
@@ -245,7 +270,7 @@ function imgPath(obj) {
           if (fs.existsSync(filePath)) {
             console.log("File exists, skipping", filePath);
           } else {
-            await download(imgUrl, filePath);
+            await doDownload(imgUrl, filePath);
             console.log("Download completed:", filePath);
           }
         }
@@ -272,6 +297,7 @@ function imgPath(obj) {
         },
       ];
       res.forEach((x) => {
+        x.targetPath = parsePath(target);
         x.uid = resp["aweme_detail"]["author"]["uid"];
         x.unique_id = resp["aweme_detail"]["author"]["unique_id"];
         x.sec_uid = resp["aweme_detail"]["author"]["sec_uid"];
@@ -279,34 +305,13 @@ function imgPath(obj) {
 
       const isSame = res[0].url === res[1].url;
       if (isSame) {
-        console.log("Best quality and highest bitrate are the same.");
+        log("Best quality and highest bitrate are the same.");
       } else {
-        console.log("Best quality and highest bitrate are different.");
+        log("Best quality and highest bitrate are different.");
       }
-      const genPath = (urlObj) =>
-        path.join(
-          process.cwd(),
-          "downloads",
-          parsePath(target) +
-            `__${urlObj.uid}` +
-            `__${urlObj.sec_uid}` +
-            `__${urlObj.bitRate.FPS}FPS` +
-            `__${urlObj.bitRate["play_addr"].width}x${urlObj.bitRate["play_addr"].height}` +
-            `__${urlObj.bitRate["bit_rate"]}bps` +
-            "." +
-            urlObj.kind
-        );
-      const doDownload = async (urlObj) => {
-        const filePath = genPath(urlObj);
-        console.log("Downloading to", filePath);
-        await download(urlObj.url, filePath);
-        console.log("Download completed:", filePath);
-      };
-      await doDownload(res[0]);
-
+      await doDownload(res[0].url, genVideoPath(res[0]));
       if (!isSame) {
-        await sleep(1000);
-        await doDownload(res[1]);
+        await doDownload(res[1].url, genVideoPath(res[1]));
       }
     }
   }
