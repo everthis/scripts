@@ -3,18 +3,22 @@ import https from 'node:https'
 import fs from 'node:fs'
 import { URL } from 'node:url'
 import path from 'node:path'
+import { EOL } from 'node:os'
 import * as readline from 'node:readline/promises'
 
 const { log } = console
 
 let targets = process.argv[2]
+const failedOnly = process.argv[2] === '-f'
 
+const inputFilePath = path.join(process.cwd(), 'input.txt')
+const failedFilePath = path.join(process.cwd(), 'failed.txt')
 if (!fs.existsSync('downloads')) {
   fs.mkdirSync('downloads')
 }
 
-async function processLineByLine() {
-  const fileStream = fs.createReadStream('input.txt')
+async function processLineByLine(filePath = inputFilePath) {
+  const fileStream = fs.createReadStream(filePath)
   const rl = readline.createInterface({
     input: fileStream,
     crlfDelay: Infinity,
@@ -128,13 +132,38 @@ function genVideoPath(urlObj) {
   )
 }
 
+// create 'failed.txt' only if it doesn't exist
+function createIfNotExist(filePath, content, failedOnly) {
+  return new Promise((res, rej) => {
+    fs.stat(filePath, (err, obj) => {
+      try {
+        if(err) {
+          fs.writeFileSync(filePath, content);
+        } else {
+          if(!failedOnly) fs.appendFileSync(filePath, EOL + content)
+          else {
+            fs.writeFileSync(filePath, content)
+          }
+        }
+        res()
+      } catch(e) {
+        rej(e)
+      }
+    })
+  })  
+}
+
 ;(async () => {
   if (!targets) {
-    targets = await processLineByLine()
+    targets = await processLineByLine(inputFilePath)
   } else {
-    targets = targets.split(',').map((x) => x.trim())
+    if(failedOnly) {
+      targets = await processLineByLine(failedFilePath)
+    } else {
+      targets = targets.split(',').map((x) => x.trim())
+    }
   }
-
+  const failed = []
   for (let i = 0; i < targets.length; i++) {
     const t = targets[i]
     console.log('Processing:', t)
@@ -143,14 +172,20 @@ function genVideoPath(urlObj) {
       if (targets.length > 2 && i < targets.length - 1) {
         await sleep(2000 + Math.floor(Math.random() * 3000))
       }
-      if (i === targets.length - 1) {
-        console.log('All tasks completed.')
-        process.exit(0)
-      }
     } catch (e) {
       console.error('Error processing', t, e)
+      failed.push(t)
     }
   }
+  console.log('failed', failed)
+  if(failed.length) {
+    await createIfNotExist(failedFilePath, failed.join(EOL), failedOnly)
+  } else {
+    await createIfNotExist(failedFilePath, '', failedOnly)
+    console.log('All tasks completed.')
+  }
+
+  process.exit(0)
 
   async function single(str) {
     const browser = await puppeteer.launch({
