@@ -93,7 +93,8 @@ function imgPath(obj) {
   return path.join(
     process.cwd(),
     'downloads',
-    obj.awemeId +
+    obj.targetPath +
+      `__${obj.awemeId}` +
       `__${obj.uid}` +
       `__${obj.sec_uid}` +
       `__${encodeURIComponent(obj.uri)}` +
@@ -137,27 +138,27 @@ function createIfNotExist(filePath, content, failedOnly) {
   return new Promise((res, rej) => {
     fs.stat(filePath, (err, obj) => {
       try {
-        if(err) {
-          fs.writeFileSync(filePath, content);
+        if (err) {
+          fs.writeFileSync(filePath, content)
         } else {
-          if(!failedOnly) fs.appendFileSync(filePath, EOL + content)
+          if (!failedOnly) fs.appendFileSync(filePath, EOL + content)
           else {
             fs.writeFileSync(filePath, content)
           }
         }
         res()
-      } catch(e) {
+      } catch (e) {
         rej(e)
       }
     })
-  })  
+  })
 }
 
 ;(async () => {
   if (!targets) {
     targets = await processLineByLine(inputFilePath)
   } else {
-    if(failedOnly) {
+    if (failedOnly) {
       targets = await processLineByLine(failedFilePath)
     } else {
       targets = targets.split(',').map((x) => x.trim())
@@ -178,7 +179,7 @@ function createIfNotExist(filePath, content, failedOnly) {
     }
   }
   console.log('failed', failed)
-  if(failed.length) {
+  if (failed.length) {
     await createIfNotExist(failedFilePath, failed.join(EOL), failedOnly)
   } else {
     await createIfNotExist(failedFilePath, '', failedOnly)
@@ -192,57 +193,65 @@ function createIfNotExist(filePath, content, failedOnly) {
       headless: true,
       args: ['--incognito'],
     })
-    let errNum = 0
-    const page = await browser.newPage()
-    await page.evaluateOnNewDocument(() => {
-      Object.defineProperty(navigator, 'webdriver', {
-        get: () => false,
-      })
-    })
-    await page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36')
-    await page.setViewport({ width: 3840, height: 2160 })
-
     const target = str.trim()
-    await page.goto(target, {
-      timeout: 6000,
-    })
-    console.log('Page loaded')
-    // video
-    const videoPromise = page
-      .waitForResponse(
-        (response) =>
-          response
-            .url()
-            .startsWith('https://www.douyin.com/aweme/v1/web/aweme/detail/') &&
-          response.status() === 200,
-        { timeout: 5000 }
+    const page = await browser.newPage()
+    let errNum = 0
+    try {
+      await page.evaluateOnNewDocument(() => {
+        Object.defineProperty(navigator, 'webdriver', {
+          get: () => false,
+        })
+      })
+      await page.setUserAgent(
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36'
       )
-      .then(resFn, errNumFn)
-      .then((r) => r.json())
-      .then(videoFn)
+      await page.setViewport({ width: 3840, height: 2160 })
 
-    const notePromise = page
-      .waitForSelector('.note-detail-container button + div > img', {
-        timeout: 5000,
+      await page.goto(target, {
+        timeout: 6000,
       })
-      .then(resFn, errNumFn)
-      .then((r) => (r == null ? null : noteEval()))
-      .then(noteFn)
+      console.log('Page loaded')
+      // video
+      const videoPromise = page
+        .waitForResponse(
+          (response) =>
+            response
+              .url()
+              .startsWith(
+                'https://www.douyin.com/aweme/v1/web/aweme/detail/'
+              ) && response.status() === 200,
+          { timeout: 5000 }
+        )
+        .then(resFn, errNumFn)
+        .then((r) => r.json())
+        .then(videoFn)
 
-    return Promise.race([videoPromise, notePromise])
-      .then(() => {
-        log('Processing completed for', target)
-        log('\n')
-      })
-      .finally(async () => {
-        /*
+      const notePromise = page
+        .waitForSelector('.note-detail-container button + div > img', {
+          timeout: 5000,
+        })
+        .then(resFn, errNumFn)
+        .then((r) => (r == null ? null : noteEval()))
+        .then(noteFn)
+
+      return Promise.race([videoPromise, notePromise])
+        .then(() => {
+          log('Processing completed for', target)
+          log('\n')
+        })
+        .finally(async () => {
+          /*
         if (page && !page.isClosed()) {
           await page.close();
         }
           */
-        await browser.close()
-        await sleep(1000)
-      })
+          await browser.close()
+          await sleep(1000)
+        })
+    } catch (e) {
+      await browser.close()
+      throw e
+    }
 
     function resFn(resp) {
       return resp
@@ -321,6 +330,7 @@ function createIfNotExist(filePath, content, failedOnly) {
           const tmp = pathname.split('.')
           const ext = tmp[tmp.length - 1]
           const obj = {
+            targetPath: parsePath(target),
             awemeId,
             uid: item.authorInfo.uid,
             sec_uid: item.authorInfo.secUid,
